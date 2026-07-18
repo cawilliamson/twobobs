@@ -8,13 +8,13 @@ use futures::StreamExt;
 use ratatui::Terminal;
 
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Alignment, Constraint, Layout};
+use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Frame;
 use tokio::sync::{mpsc, Mutex};
-use tokio::time::{Duration, Instant};
+use tokio::time::Duration;
 
 use crate::config::Config;
 use crate::history::Role;
@@ -46,10 +46,12 @@ pub struct TuiAgent {
     status: String,
     busy: bool,
     ui_rx: Option<mpsc::Receiver<UiEvent>>,
+    model_name: String,
 }
 
 impl TuiAgent {
     pub fn new(agent: Agent) -> Self {
+        let model_name = agent.config.model.clone();
         Self {
             agent: Arc::new(Mutex::new(agent)),
             messages: Vec::new(),
@@ -58,6 +60,7 @@ impl TuiAgent {
             status: "ready".to_string(),
             busy: false,
             ui_rx: None,
+            model_name,
         }
     }
 
@@ -111,18 +114,18 @@ impl TuiAgent {
             Constraint::Length(1),
         ]).split(f.area());
 
+        // build all chat lines: each message is its own bordered box titled by role/model
         let mut lines: Vec<Line> = Vec::new();
-
         for m in &self.messages {
-            render_bubble(&mut lines, m);
+            push_box(&mut lines, m, &self.model_name, chunks[0].width as usize);
         }
 
         // live streaming bubble
         if self.busy && !self.streaming.is_empty() {
-            render_bubble(&mut lines, &TuiMessage {
+            push_box(&mut lines, &TuiMessage {
                 role: Role::Assistant,
                 content: self.streaming.clone(),
-            });
+            }, &self.model_name, chunks[0].width as usize);
         }
 
         // thinking indicator
@@ -135,27 +138,22 @@ impl TuiAgent {
             ));
         }
 
+        // single scrolling container for all the per-message boxes
         let chat = Paragraph::new(lines)
             .style(Style::default().fg(Color::White).bg(Color::Black))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("twobobs")
-                    .style(Style::default().fg(Color::White).bg(Color::Black),
-            ))
             .wrap(Wrap { trim: false })
             .scroll((0, u16::MAX));
         f.render_widget(chat, chunks[0]);
 
-        // input box
-        let input_style = Style::default().fg(Color::Black).bg(Color::White);
+        // input box — white border, white text, black bg
+        let input_fg = Style::default().fg(Color::White).bg(Color::Black);
         let input = Paragraph::new(self.input.as_str())
-            .style(input_style)
+            .style(input_fg)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title("input")
-                    .style(input_style),
+                    .style(input_fg),
             );
         f.render_widget(input, chunks[1]);
 
@@ -313,7 +311,7 @@ async fn run_turn_inner(
 
         if let Some(c) = &last_cost {
             let _ = tx.send(UiEvent::Status(format!(
-                "{} cost ${:.6} ({}+{} tok)",
+                "{} cost ${:.6} (in={} out={} tok)",
                 {
                     let a = agent.lock().await;
                     a.config.model.clone()
@@ -347,41 +345,58 @@ async fn run_turn_inner(
         }
     }
 }
-
-// render an iMessage-style bubble into the lines vec
-fn render_bubble(lines: &mut Vec<Line>, m: &TuiMessage) {
+// draw a bordered box around a message, titled by role (user / model name / tool / sys).
+// width is the available inner width (the chat area width). lines are pushed into `lines`.
+fn push_box(lines: &mut Vec<Line>, m: &TuiMessage, model_name: &str, width: usize) {
     let (fg, bg) = match m.role {
-        Role::User => (Color::Black, Color::Gray),
-        Role::Assistant => (Color::White, Color::Blue),
-        Role::Tool => (Color::Black, Color::Yellow),
-        Role::System => (Color::White, Color::DarkGray),
+        Role::User => (Color::Cyan, Color::Black),
+        Role::Assistant => (Color::Blue, Color::Black),
+        Role::Tool => (Color::Yellow, Color::Black),
+        Role::System => (Color::DarkGray, Color::Black),
     };
-
     let style = Style::default().fg(fg).bg(bg);
     let label = match m.role {
-        Role::User => "you",
-        Role::Assistant => "bob",
-        Role::Tool => "tool",
-        Role::System => "sys",
+        Role::User => "you".to_string(),
+        Role::Assistant => model_name.to_string(),
+        Role::Tool => "tool".to_string(),
+        Role::System => "sys".to_string(),
     };
 
-    lines.push(Line::from(""));
+    // inner width: subtract borders (2) + 2 pad spaces
+    let inner = width.saturating_sub(4).max(1);
 
-    let mut first = Line::from(Span::styled(format!("[{label}] "), style));
-    let content_lines: Vec<&str> = m.content.lines().collect();
-    if content_lines.is_empty() {
-        lines.push(first);
-        return;
+    // top border with title
+    lines.push(Line::styled(format!("┌─[ {label} ]─┐"), style));
+
+    let content = m.content.clone();
+    for raw in content.lines() {
+        if raw.is_empty() {
+            lines.push(Line::styled(format!("│ {:<width$} │", "", width = inner), style));
+            continue;
+        }
+        // manual char-boundary-respecting wrap
+        let mut start = 0;
+        let bytes = raw.as_bytes();
+        while start < bytes.len() {
+            let end = (start + inner).min(bytes.len());
+            let mut e = end;
+            while e > start && !raw.is_char_boundary(e) { e -= 1; }
+            if e == start { e = end; }
+            let chunk = &raw[start..e];
+            lines.push(Line::styled(format!("│ {:<width$} │", chunk, width = inner), style));
+            start = e;
+        }
     }
-    first.spans.push(Span::styled(content_lines[0].to_string(), style));
-    lines.push(first);
-    for l in &content_lines[1..] {
-        lines.push(Line::from(Span::styled(l.to_string(), style)));
+    if content.is_empty() {
+        lines.push(Line::styled(format!("│ {:<width$} │", "", width = inner), style));
     }
+
+    let bot = "─".repeat(inner + 2);
+    lines.push(Line::styled(format!("└{bot}┘"), style));
+    lines.push(Line::from(""));
 }
 
 fn thinking_spinner() -> char {
-    // animate based on current time so the ticker redraws different frames
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())

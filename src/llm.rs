@@ -64,7 +64,7 @@ pub struct CallCost {
 }
 
 impl CallCost {
-    pub fn compute(rates: &ModelRates, usage: &OpenAiUsage) -> Self {
+    pub(crate) fn compute(rates: &ModelRates, usage: &OpenAiUsage) -> Self {
         let input_tokens = usage.prompt_tokens;
         let output_tokens = usage.completion_tokens;
         let cache_read_tokens = usage.prompt_tokens_details.as_ref()
@@ -444,7 +444,7 @@ struct OpenAiToolFunction {
 }
 
 #[derive(Deserialize, Clone, Debug)]
-struct OpenAiUsage {
+pub(crate) struct OpenAiUsage {
     #[serde(default)]
     prompt_tokens: u64,
     #[serde(default)]
