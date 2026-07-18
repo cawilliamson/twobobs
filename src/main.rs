@@ -147,14 +147,18 @@ async fn main() -> Result<()> {
     let llm: Box<dyn LlmClient> = Box::new(llm::HttpLlmClient::from_env().await?);
 
     let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|a| a == "--tui") {
+    // collect non-flag prompt args
+    let prompt_args: Vec<String> = args.iter().skip(1).filter(|a| !a.starts_with("--")).cloned().collect();
+
+    // default: launch TUI when no prompt given
+    if prompt_args.is_empty() {
         tui::run(config, llm).await?;
         return Ok(());
     }
 
     let mut agent = Agent::new(config, llm);
-    let prompt = args.get(1).cloned().unwrap_or_else(|| "say hello world".to_string());
-    let streaming = std::env::var("TWOBOBS_STREAM").map(|v| v == "1").unwrap_or(false);
+    let prompt = prompt_args.join(" ");
+    let streaming = std::env::var("TWOBOBS_STREAM").map(|v| v == "1").unwrap_or(true);
     if streaming {
         run_stream(&mut agent, prompt).await?;
     } else {

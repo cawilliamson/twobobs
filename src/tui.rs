@@ -69,31 +69,33 @@ impl TuiAgent {
         ]).split(f.area());
 
         // chat scrollback
+        let chat_style = Style::default().fg(Color::White).bg(Color::Black);
         let lines: Vec<Line> = self.messages.iter().flat_map(|m| {
             let prefix = match m.role {
-                Role::User => Span::styled("you> ", Style::default().fg(Color::Cyan)),
-                Role::Assistant => Span::styled("bob> ", Style::default().fg(Color::Green)),
-                Role::Tool => Span::styled("tool> ", Style::default().fg(Color::Yellow)),
-                Role::System => Span::styled("sys> ", Style::default().fg(Color::DarkGray)),
+                Role::User => Span::styled("you> ", Style::default().fg(Color::Cyan).bg(Color::Black)),
+                Role::Assistant => Span::styled("bob> ", Style::default().fg(Color::Green).bg(Color::Black)),
+                Role::Tool => Span::styled("tool> ", Style::default().fg(Color::Yellow).bg(Color::Black)),
+                Role::System => Span::styled("sys> ", Style::default().fg(Color::DarkGray).bg(Color::Black)),
             };
             m.content.lines().enumerate().map(move |(i, l)| {
                 let mut line = Line::default();
                 if i == 0 { line.spans.push(prefix.clone()); }
-                line.spans.push(Span::raw(l.to_string()));
+                line.spans.push(Span::styled(l.to_string(), chat_style));
                 line
             }).collect::<Vec<_>>()
         }).collect();
 
         let chat = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title("twobobs"))
+            .style(chat_style)
+            .block(Block::default().borders(Borders::ALL).title("twobobs").style(chat_style))
             .wrap(Wrap { trim: false })
             .scroll((0, u16::MAX));
 
         // input box
-        let input_style = Style::default().add_modifier(Modifier::REVERSED);
+        let input_style = Style::default().fg(Color::Black).bg(Color::White);
         let input = Paragraph::new(self.input.as_str())
             .style(input_style)
-            .block(Block::default().borders(Borders::ALL).title("input"));
+            .block(Block::default().borders(Borders::ALL).title("input").style(input_style));
         f.render_widget(input, chunks[1]);
 
         // status bar
@@ -102,8 +104,9 @@ impl TuiAgent {
         } else {
             self.status.clone()
         };
+        let status_style = Style::default().fg(Color::Yellow).bg(Color::Black);
         let status = Paragraph::new(status_text)
-            .style(Style::default().fg(Color::DarkGray));
+            .style(status_style);
         f.render_widget(status, chunks[2]);
     }
 
