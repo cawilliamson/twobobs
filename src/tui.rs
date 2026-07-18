@@ -365,8 +365,16 @@ fn push_box(lines: &mut Vec<Line>, m: &TuiMessage, model_name: &str, width: usiz
     // inner width: subtract borders (2) + 2 pad spaces
     let inner = width.saturating_sub(4).max(1);
 
-    // top border with title
-    lines.push(Line::styled(format!("┌─[ {label} ]─┐"), style));
+    // top border with title, full-width to match bottom
+    let title = format!("[ {label} ]");
+    let title_len = title.chars().count();
+    // top fill (between corners) must equal bottom fill = inner + 2
+    let fill = inner + 2;
+    // layout: ┌ + ─(left) + title + ─(right) + ┐
+    let left = 1;
+    let right = fill.saturating_sub(title_len + left);
+    let top = format!("┌{}{}{}┐", "─".repeat(left), title, "─".repeat(right));
+    lines.push(Line::styled(top, style));
 
     let content = m.content.clone();
     for raw in content.lines() {
